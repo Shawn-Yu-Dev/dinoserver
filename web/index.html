@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#050805" />
+    <meta name="description" content="复古极客风恐龙跳跃游戏，带全球排行榜与一键定位我的排名。" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23050805'/%3E%3Cpath d='M3 6h7v2h2v2H9v4H7v-3H5v3H3V6z' fill='%238dff9f'/%3E%3C/svg%3E"
+    />
+    <title>DINO RUN · 全球排行榜</title>
+  </head>
+  <body>
+    <main class="app">
+      <section class="game">
+        <div class="hud">
+          <span>HI <b id="hud-best">00000</b></span>
+          <span>SCORE <b id="hud-score">00000</b></span>
+        </div>
+        <canvas id="game" width="800" height="240" aria-label="恐龙跳跃游戏画布"></canvas>
+        <p id="status" class="status"></p>
+      </section>
+
+      <aside class="board" aria-label="全球排行榜">
+        <h2>GLOBAL LEADERBOARD</h2>
+
+        <form id="identity-form" class="identity">
+          <label for="identity-input">PLAYER</label>
+          <div class="identity-row">
+            <input id="identity-input" type="text" maxlength="24" autocomplete="off" spellcheck="false" />
+            <button type="submit">SAVE</button>
+          </div>
+          <p id="identity-msg" class="msg"></p>
+        </form>
+
+        <div class="pager">
+          <button id="board-prev" type="button">&lt; PREV</button>
+          <span id="board-page">--</span>
+          <button id="board-next" type="button">NEXT &gt;</button>
+        </div>
+        <button id="board-locate" type="button" class="locate">▶ LOCATE ME</button>
+
+        <p id="board-msg" class="msg" aria-live="polite"></p>
+        <ol id="board-list" class="rows"></ol>
+      </aside>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
