@@ -139,4 +139,6 @@ GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o d
 ## 分支与协作
 
 - `main`：仅由维护者审核合并，禁止直接提交
-- `kilo/*`：开发分支，每次提交后以 `main` 为 base 发起 PR 供审核
+- `kilo/calm-mosaic-wzz`：唯一开发分支，所有提交只允许落在这里
+- **固定分支 + 滚动 PR**：开发分支复用同一个 PR（base 为 `main`）；每完成一个模块，追加提交并更新 PR 描述中的改动说明，由维护者审核；PR 合并后，继续使用该分支开启下一个滚动 PR
+- 每次提交同步更新本 README
