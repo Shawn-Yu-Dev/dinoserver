@@ -1,12 +1,13 @@
 # dinoserver
 
-仿 Chrome 恐龙跳跃游戏的独立网页游戏后端：Go + Gin 单二进制，内嵌前端静态资源，使用 Redis Sorted Set 提供全球排行榜与“一键定位我的排名”。
+仿 Chrome 恐龙跳跃游戏的独立网页游戏：Go + Gin 单二进制，内嵌前端静态资源，使用 Redis Sorted Set 提供全球排行榜与“一键定位我的排名”。游戏本体直接使用 Chromium 官方 `chrome://dino` 源码（BSD-3-Clause），不自行重写。
 
 ## 技术栈
 
 - **后端**：Go 1.23、Gin、go-redis v9
 - **存储**：Redis ZSET（`global_leaderboard`）
 - **前端**：Vite + Vanilla TypeScript（构建产物输出至 `web/dist`，由 `go:embed` 打包进二进制）
+- **游戏引擎**：Chromium 官方 dino（`offline.js`，BSD-3-Clause）
 - **部署**：单二进制，交叉编译至 FreeBSD/amd64
 
 ## 目录结构
@@ -24,14 +25,18 @@
     │   ├── identity.ts      # localStorage 昵称
     │   ├── style.css        # 复古极客风样式与 CRT 扫描线
     │   ├── game/
-    │   │   ├── game.ts      # Canvas 主循环、输入、状态机、生成与碰撞
-    │   │   ├── dino.ts      # 恐龙物理与站立/蹲下形态
-    │   │   ├── obstacles.ts # 障碍类型与间距生成
-    │   │   ├── collision.ts # AABB 碰撞
-    │   │   ├── sprites.ts   # 纯矩形像素绘制
-    │   │   └── config.ts    # 物理与难度常量
+    │   │   ├── runner.ts    # 官方引擎适配层：最高分、结束回调、输入隔离
+    │   │   └── chrome/      # 原样引入的 Chromium 130 源码与许可
+    │   │       ├── offline.js
+    │   │       ├── offline-sprite-definitions.js
+    │   │       ├── constants.js
+    │   │       ├── load-time-data.js  # 独立站点的最小桩
+    │   │       ├── offline.d.ts
+    │   │       ├── README.md
+    │   │       └── LICENSE
     │   └── leaderboard/
     │       └── panel.ts     # 分页、定位、平滑滚动与闪烁高亮
+    ├── public/dino/         # 官方精灵图 1x/2x
     └── dist/                # 构建产物（已提交，go:embed 的输入）
 ```
 
@@ -64,7 +69,7 @@ npm run dev      # http://localhost:5173，/api 自动代理到 :8080
 npm run build    # 类型检查并输出 web/dist
 ```
 
-前端不引入任何运行时框架，仅依赖 Vite 与 TypeScript，产物体积约 15 KB（gzip 约 6 KB）。
+前端不引入任何运行时框架，仅依赖 Vite 与 TypeScript。JS 约 66 KB（gzip 约 18 KB），其中包含完整的官方 dino 引擎；`index.html` 内联了官方音效的 data URI。
 
 ### 配置
 
@@ -141,21 +146,31 @@ Redis 可用时返回 `{"status":"ok"}`。
 
 ## 游戏与排行榜
 
+### 官方引擎
+
+游戏本体来自 Chromium `chrome://dino`，版本 `130.0.6723.1`，完整保留官方逻辑、精灵图与音效：
+
+- 源码：`web/src/game/chrome/`，详见该目录下的 `README.md`
+- 许可：BSD-3-Clause，许可全文见 `web/src/game/chrome/LICENSE`
+- 唯一源码改动：将 `chrome://resources/js/load_time_data.js` 的 import 指向本地最小桩
+- 适配层 `web/src/game/runner.ts` 只做三件事：载入本地最高分、包装 `gameOver()` 上报最终分数、包装 `setPlayStatus()` 通知 UI 开局
+
 ### 操作
 
 | 输入 | 行为 |
 |---|---|
-| `Space` / `↑` / 点击画布 / 触摸画布 | 开始游戏、跳跃、结束后重开 |
+| `Space` / `↑` | 开始游戏、跳跃 |
 | `↓` | 地面蹲下；空中加速下落 |
+| 触摸画面 | 移动端开始游戏、跳跃 |
+| 点击画布 / `Enter` / 结束 1.2s 后 `Space` | 撞击后重新开始 |
 
-### 玩法
+### 玩法与集成
 
-- 逻辑分辨率固定 `800×240`，按 `devicePixelRatio` 缩放，窗口尺寸变化不影响物理判定。
-- 重力 `2600 px/s²`，起跳初速度 `-780 px/s`；速度从 `340 px/s` 随时间加速至 `980 px/s`。
-- 分数按行进距离换算，随速度提升自然加快增长。
-- 障碍按距离生成（而非固定时间），保证高速下仍留有反应时间；基础仙人掌之外，分数达到 350 后出现飞鸟：低空飞鸟需蹲下，中空飞鸟需起跳。
-- 碰撞盒四边内缩，减少“擦边即死”的挫败感。
-- 最高分保存在 `localStorage`，游戏结束后自动 `POST /api/score`，成功后立即定位到自己的排名页。
+- 分数由官方 `DistanceMeter.getActualDistance()` 计算，并与画布右上角显示一致。
+- 最高分保存在 `localStorage`，开局时回填官方画布的 `HI`；官方 `errorPageController` 桥接到本地存储。
+- 游戏结束后自动 `POST /api/score`，成功后立即定位到自己的排名页。
+- 昵称输入框内阻止按键冒泡，避免编辑昵称时误触恐龙跳跃。
+- 官方画布通过 CSS filter 转为荧光绿终端配色，外层叠加 CRT 扫描线，不修改渲染代码。
 
 ### 排行榜面板
 
@@ -166,7 +181,7 @@ Redis 可用时返回 `{"status":"ok"}`。
 
 ## 静态资源托管
 
-`web/dist` 通过 `go:embed` 编入二进制，无需额外部署静态文件。命中 `assets/` 的构建产物返回一年 immutable 缓存；其余路径回退 `index.html` 以支持 SPA 路由；`/api/*` 未命中返回 JSON 404。
+`web/dist` 通过 `go:embed` 编入二进制，无需额外部署静态文件。命中 `assets/` 的构建产物返回一年 immutable 缓存；其余路径回退 `index.html` 以支持 SPA 路由；`/api/*` 未命中返回 JSON 404。官方精灵图位于 `web/public/dino/`，构建时复制到 `dist/dino/` 一并内嵌。
 
 > `web/dist` 已随仓库提交，因此在没有 Node 环境的机器上也能直接 `go build`。修改前端后需执行 `npm run build` 并一并提交构建产物。
 
@@ -183,7 +198,7 @@ GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o d
 
 - [x] 阶段 1：后端核心（静态内嵌、提交成绩、分页排行、定位我的排名）
 - [x] 阶段 2：游戏主体与排行榜 UI（Canvas 循环、物理、碰撞、计分、分页与定位面板）
-- [ ] 阶段 3：视觉与交互打磨（音效、更多障碍组合、移动端细节）
+- [x] 阶段 3：替换为 Chromium 官方 dino 引擎，复古终端视觉与玩法说明面板
 - [ ] 阶段 4：录像采集、压缩存储与回放
 - [ ] 阶段 5：反作弊、限流与运维加固
 

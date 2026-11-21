@@ -1,7 +1,7 @@
 import './style.css';
 import { submitScore } from './api';
+import { ChromeDinoGame } from './game/runner';
 import { getUsername, setUsername } from './identity';
-import { DinoGame } from './game/game';
 import { LeaderboardPanel } from './leaderboard/panel';
 
 const BEST_KEY = 'dino.best';
@@ -12,12 +12,7 @@ function $<T extends HTMLElement>(selector: string): T {
   return el;
 }
 
-const hud = {
-  score: $<HTMLElement>('#hud-score'),
-  best: $<HTMLElement>('#hud-best'),
-  status: $<HTMLElement>('#status'),
-};
-
+const statusEl = $<HTMLElement>('#status');
 const identity = {
   form: $<HTMLFormElement>('#identity-form'),
   input: $<HTMLInputElement>('#identity-input'),
@@ -36,37 +31,34 @@ const panel = new LeaderboardPanel(
   getUsername,
 );
 
+function setStatus(text: string, isError = false): void {
+  statusEl.textContent = text;
+  statusEl.classList.toggle('error', isError);
+}
+
 // ---------- 本地最高分 ----------
 
 let best = Number(localStorage.getItem(BEST_KEY)) || 0;
-hud.best.textContent = pad(best);
 
-function pad(n: number): string {
-  return String(n).padStart(5, '0');
-}
-
-function recordBest(score: number): void {
-  if (score <= best) return;
+function keepHighScore(score: number): void {
+  if (!Number.isFinite(score) || score <= best) return;
   best = score;
-  localStorage.setItem(BEST_KEY, String(best));
-  hud.best.textContent = pad(best);
+  localStorage.setItem(BEST_KEY, String(score));
 }
 
-// ---------- 游戏 ----------
+// ---------- 官方 Chrome Dino 引擎 ----------
 
-const game = new DinoGame($<HTMLCanvasElement>('#game'), {
-  onStart: () => {
-    hud.status.textContent = '';
-  },
-  onScore: (score) => {
-    hud.score.textContent = pad(score);
-  },
+new ChromeDinoGame('#dino-game', {
+  bestScore: best,
+  onStart: () => setStatus(''),
+  onHighScore: keepHighScore,
   onGameOver: (score) => {
-    recordBest(score);
-    hud.status.textContent = `GAME OVER · SCORE ${score} · PRESS SPACE TO RETRY`;
-    if (score > 0) {
-      void uploadScore(score);
+    if (score <= 0) {
+      setStatus('SCORE 0 · PRESS SPACE TO RETRY');
+      return;
     }
+    setStatus(`SCORE ${score} · SUBMITTING…`);
+    void uploadScore(score);
   },
 });
 
@@ -74,11 +66,11 @@ const game = new DinoGame($<HTMLCanvasElement>('#game'), {
 async function uploadScore(score: number): Promise<void> {
   try {
     const result = await submitScore(getUsername(), score);
-    hud.status.textContent = `已上榜 · 第 ${result.rank} / ${result.total} 名 · PRESS SPACE TO RETRY`;
+    setStatus(`RANK #${result.rank} / ${result.total} · SCORE ${score} · SPACE TO RETRY`);
     await panel.locateMe();
   } catch (err) {
     const text = err instanceof Error ? err.message : '未知错误';
-    hud.status.textContent = `成绩提交失败：${text} · PRESS SPACE TO RETRY`;
+    setStatus(`提交失败：${text}`, true);
   }
 }
 
@@ -98,7 +90,13 @@ identity.form.addEventListener('submit', (e) => {
   }
 });
 
+// 官方 dino 在 document 上监听方向键与空格：输入框内需要阻止冒泡，
+// 否则编辑昵称时按空格会让恐龙起跳。
+for (const el of document.querySelectorAll<HTMLElement>('input, textarea')) {
+  el.addEventListener('keydown', (e) => e.stopPropagation());
+  el.addEventListener('keyup', (e) => e.stopPropagation());
+}
+
 // ---------- 启动 ----------
 
-game.start();
 void panel.load(1);
