@@ -13,6 +13,7 @@ export interface RunnerInstance {
   distanceMeter: DistanceMeter;
   setPlayStatus(playing: boolean): void;
   gameOver(): void;
+  restart(): void;
 }
 
 export interface RunnerConstructor {

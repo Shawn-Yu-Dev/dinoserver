@@ -8,11 +8,13 @@ const BEST_KEY = 'dino.best';
 
 function $<T extends HTMLElement>(selector: string): T {
   const el = document.querySelector<T>(selector);
-  if (!el) throw new Error(`缺少页面元素：${selector}`);
+  if (!el) throw new Error(`Missing page element: ${selector}`);
   return el;
 }
 
 const statusEl = $<HTMLElement>('#status');
+const screenEl = $<HTMLElement>('.screen');
+const runAgainBtn = $<HTMLButtonElement>('#run-again');
 const identity = {
   form: $<HTMLFormElement>('#identity-form'),
   input: $<HTMLInputElement>('#identity-input'),
@@ -36,9 +38,10 @@ function setStatus(text: string, isError = false): void {
   statusEl.classList.toggle('error', isError);
 }
 
-// ---------- 本地最高分 ----------
+// ---------- Local best score ----------
 
 let best = Number(localStorage.getItem(BEST_KEY)) || 0;
+let lastGameOverAt = 0;
 
 function keepHighScore(score: number): void {
   if (!Number.isFinite(score) || score <= best) return;
@@ -46,15 +49,20 @@ function keepHighScore(score: number): void {
   localStorage.setItem(BEST_KEY, String(score));
 }
 
-// ---------- 官方 Chrome Dino 引擎 ----------
+// ---------- Official Chrome Dino engine ----------
 
-new ChromeDinoGame('#dino-game', {
+const game = new ChromeDinoGame('#dino-game', {
   bestScore: best,
-  onStart: () => setStatus(''),
+  onStart: () => {
+    setStatus('');
+    runAgainBtn.disabled = true;
+  },
   onHighScore: keepHighScore,
   onGameOver: (score) => {
+    lastGameOverAt = performance.now();
+    runAgainBtn.disabled = false;
     if (score <= 0) {
-      setStatus('SCORE 0 · PRESS SPACE TO RETRY');
+      setStatus('SCORE 0 · PLAY AGAIN');
       return;
     }
     setStatus(`SCORE ${score} · SUBMITTING…`);
@@ -62,19 +70,51 @@ new ChromeDinoGame('#dino-game', {
   },
 });
 
-/** 自动提交成绩，成功后直接定位到自己的排名。 */
+/**
+ * 直接调用官方 restart()，不依赖 isCanvasInView()。
+ * 用于按钮重开，以及页面被排行榜滚动后空格重开的兜底。
+ */
+function restartRun(): boolean {
+  if (!game.crashed || performance.now() - lastGameOverAt < 500) return false;
+  const restarted = game.restart();
+  if (restarted) {
+    runAgainBtn.blur();
+    screenEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  return restarted;
+}
+
+runAgainBtn.addEventListener('click', () => void restartRun());
+
+// 自动提交后会定位排行榜；若页面因此把游戏滚出视口，官方引擎不会再响应空格。
+// 这里在“已结束且画布不在视口”时接管空格：直接重开并把游戏滚回视野。
+const gameContainer = $<HTMLElement>('#dino-game .runner-container');
+
+function gameInView(): boolean {
+  return gameContainer.getBoundingClientRect().top > -10;
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.code !== 'Space' || e.repeat || !game.crashed) return;
+  if (isInteractiveTarget(e.target) || gameInView()) return;
+  if (performance.now() - lastGameOverAt < 500) return;
+  e.preventDefault();
+  void restartRun();
+});
+
+/** 自动提交成绩，成功后刷新排行榜并高亮自己（不滚动页面）。 */
 async function uploadScore(score: number): Promise<void> {
   try {
     const result = await submitScore(getUsername(), score);
-    setStatus(`RANK #${result.rank} / ${result.total} · SCORE ${score} · SPACE TO RETRY`);
-    await panel.locateMe();
+    setStatus(`RANK #${result.rank} / ${result.total} · BEST ${result.score} · PLAY AGAIN`);
+    await panel.locateMe(false);
   } catch (err) {
-    const text = err instanceof Error ? err.message : '未知错误';
-    setStatus(`提交失败：${text}`, true);
+    const text = err instanceof Error ? err.message.toUpperCase() : 'UNKNOWN ERROR';
+    setStatus(`SUBMIT FAILED: ${text}`, true);
   }
 }
 
-// ---------- 玩家昵称 ----------
+// ---------- Player identity ----------
 
 identity.input.value = getUsername();
 
@@ -82,10 +122,10 @@ identity.form.addEventListener('submit', (e) => {
   e.preventDefault();
   try {
     identity.input.value = setUsername(identity.input.value);
-    identity.msg.textContent = '已保存';
+    identity.msg.textContent = 'SAVED';
     identity.msg.classList.remove('error');
   } catch (err) {
-    identity.msg.textContent = err instanceof Error ? err.message : '昵称不合法';
+    identity.msg.textContent = err instanceof Error ? err.message : 'INVALID PLAYER ID';
     identity.msg.classList.add('error');
   }
 });
@@ -97,6 +137,13 @@ for (const el of document.querySelectorAll<HTMLElement>('input, textarea')) {
   el.addEventListener('keyup', (e) => e.stopPropagation());
 }
 
-// ---------- 启动 ----------
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'].includes(target.tagName)
+  );
+}
+
+// ---------- Bootstrap ----------
 
 void panel.load(1);
