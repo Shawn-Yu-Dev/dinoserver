@@ -47,7 +47,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     throw new ApiError(
       res.status,
       err.error ?? 'unknown',
-      err.message ?? `请求失败（HTTP ${res.status}）`,
+      err.message ?? `Request failed (HTTP ${res.status})`,
     );
   }
   return body as T;

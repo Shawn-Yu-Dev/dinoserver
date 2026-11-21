@@ -1,18 +1,18 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#040705" />
     <meta name="color-scheme" content="dark" />
-    <meta name="description" content="复古极客风恐龙跳跃游戏，官方 Chrome Dino 引擎，带全球排行榜与一键定位我的排名。" />
+    <meta name="description" content="Retro arcade dinosaur runner powered by the official Chrome Dino engine, with a global leaderboard and one-click rank lookup." />
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23040705'/%3E%3Cpath d='M3 6h7v2h2v2H9v4H7v-3H5v3H3V6z' fill='%239dffb0'/%3E%3C/svg%3E"
     />
     <title>DINO RUN · GLOBAL LEADERBOARD</title>
-    <script type="module" crossorigin src="/assets/index-BZmurv7W.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BPGrpTQl.css">
+    <script type="module" crossorigin src="/assets/index-DlngqSk3.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CDLre0hP.css">
   </head>
   <body>
     <div class="shell">
@@ -25,7 +25,7 @@
       </header>
 
       <main class="app">
-        <section class="game" aria-label="恐龙跳跃游戏">
+        <section class="game" aria-label="Dinosaur runner game">
           <div class="screen">
             <div class="screen-bar">
               <span class="screen-title">CHROME://DINO</span>
@@ -41,28 +41,30 @@
               </div>
             </div>
 
-            <div class="scanlines" aria-hidden="true"></div>
           </div>
 
-          <p id="status" class="status" aria-live="polite">PRESS SPACE TO RUN</p>
+          <div class="game-actions">
+            <p id="status" class="status" aria-live="polite">PRESS SPACE TO RUN</p>
+            <button id="run-again" class="run-again" type="button" disabled>▶ RUN AGAIN</button>
+          </div>
 
-          <div class="guide" aria-label="玩法说明">
+          <div class="guide" aria-label="How to play">
             <div class="guide-row">
               <span class="guide-index">01</span>
-              <p><b>RUN</b>空格或 ↑ 起跳，↓ 蹲下；移动端轻触画面。</p>
+              <p><b>RUN</b>SPACE or ↑ to jump, ↓ to duck. Tap the screen on mobile.</p>
             </div>
             <div class="guide-row">
               <span class="guide-index">02</span>
-              <p><b>SUBMIT</b>撞击结束自动上传成绩，同一昵称只保留最高分。</p>
+              <p><b>SUBMIT</b>Scores upload on crash; only your best run is kept.</p>
             </div>
             <div class="guide-row">
               <span class="guide-index">03</span>
-              <p><b>LOCATE</b>跳到自己的名次页并高亮闪烁，快速找到位置。</p>
+              <p><b>LOCATE</b>Jump to your rank page and blink your row.</p>
             </div>
           </div>
         </section>
 
-        <aside class="board" aria-label="全球排行榜">
+        <aside class="board" aria-label="Global leaderboard">
           <div class="board-head">
             <h2>GLOBAL RANKING</h2>
             <span class="board-badge">ALL-TIME</span>

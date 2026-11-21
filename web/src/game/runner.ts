@@ -1,6 +1,7 @@
-// 官方 Chrome Dino 引擎的适配层。
-// 游戏逻辑全部由 ./chrome/offline.js（Chromium 130，BSD）执行；
-// 这里只负责：桥接最高分、在结束时上报分数、通知 UI 开局，以及隔离输入。
+// Adapter for the official Chrome Dino engine.
+// All game logic lives in ./chrome/offline.js (Chromium 130, BSD).
+// This layer only bridges high score storage, reports the final score,
+// notifies the UI when a run starts, and exposes an explicit restart.
 import { Runner, type RunnerInstance } from './chrome/offline.js';
 
 export interface ChromeDinoOptions {
@@ -31,7 +32,7 @@ export class ChromeDinoGame {
   constructor(containerSelector: string, private readonly options: ChromeDinoOptions) {
     const container = document.querySelector<HTMLElement>(containerSelector);
     if (!container) {
-      throw new Error(`缺少游戏容器：${containerSelector}`);
+      throw new Error(`Missing game container: ${containerSelector}`);
     }
     this.containerEl = container;
 
@@ -50,6 +51,21 @@ export class ChromeDinoGame {
 
     // 载入本地最高分（官方画布右上角的 HI）。
     this.bridgeWindow.initializeEasterEggHighScore?.(this.options.bestScore);
+  }
+
+  /** 是否处于撞击后的结束状态。 */
+  get crashed(): boolean {
+    return this.runner.crashed;
+  }
+
+  /**
+   * 直接调用官方 restart()。
+   * 官方键盘重开受 isCanvasInView() 限制；页面滚动后按钮或兜底逻辑可绕过该限制。
+   */
+  restart(): boolean {
+    if (!this.runner.crashed) return false;
+    this.runner.restart();
+    return true;
   }
 
   /** 官方画布中正在显示的分数（像素距离 × 官方系数）。 */

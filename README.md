@@ -86,7 +86,7 @@ npm run build    # 类型检查并输出 web/dist
 错误响应统一为：
 
 ```json
-{ "error": "invalid_score", "message": "score 必须在 0 到 10000000 之间" }
+{ "error": "invalid_score", "message": "score must be between 0 and 10000000" }
 ```
 
 ### `POST /api/score`
@@ -162,13 +162,17 @@ Redis 可用时返回 `{"status":"ok"}`。
 | `Space` / `↑` | 开始游戏、跳跃 |
 | `↓` | 地面蹲下；空中加速下落 |
 | 触摸画面 | 移动端开始游戏、跳跃 |
-| 点击画布 / `Enter` / 结束 1.2s 后 `Space` | 撞击后重新开始 |
+| 点击画布 / `Enter` / 结束 1.2s 后 `Space` | 撞击后重新开始（桌面端） |
+| `▶ RUN AGAIN` | 撞击后随时重开，不受冷却与页面滚动影响 |
+
+界面文案全部为英文（`<html lang="en">`），服务端返回的错误信息同为英文。
 
 ### 玩法与集成
 
 - 分数由官方 `DistanceMeter.getActualDistance()` 计算，并与画布右上角显示一致。
 - 最高分保存在 `localStorage`，开局时回填官方画布的 `HI`；官方 `errorPageController` 桥接到本地存储。
-- 游戏结束后自动 `POST /api/score`，成功后立即定位到自己的排名页。
+- 游戏结束后自动 `POST /api/score`，成功后刷新排行榜并高亮自己；自动刷新**不滚动页面**，避免把游戏画布滚出视口。
+- 官方键盘重开受 `isCanvasInView()` 限制：页面被排行榜滚动后，空格由 UI 接管，直接调用官方 `restart()` 并平滑滚回游戏；`RUN AGAIN` 按钮同样绕过该限制，因此可以无限重复游玩。
 - 昵称输入框内阻止按键冒泡，避免编辑昵称时误触恐龙跳跃。
 - 官方画布通过 CSS filter 转为荧光绿终端配色，外层叠加 CRT 扫描线，不修改渲染代码。
 
@@ -198,7 +202,7 @@ GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o d
 
 - [x] 阶段 1：后端核心（静态内嵌、提交成绩、分页排行、定位我的排名）
 - [x] 阶段 2：游戏主体与排行榜 UI（Canvas 循环、物理、碰撞、计分、分页与定位面板）
-- [x] 阶段 3：替换为 Chromium 官方 dino 引擎，复古终端视觉与玩法说明面板
+- [x] 阶段 3：Chromium 官方 dino 引擎、复古终端视觉、全英文界面、重复游玩修复
 - [ ] 阶段 4：录像采集、压缩存储与回放
 - [ ] 阶段 5：反作弊、限流与运维加固
 

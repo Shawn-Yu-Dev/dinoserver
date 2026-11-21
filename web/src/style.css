@@ -173,6 +173,10 @@ body {
 }
 
 /* 官方 Runner 注入的结构 */
+.hidden {
+  display: none !important;
+}
+
 .icon-offline {
   display: none;
 }
@@ -261,6 +265,30 @@ body {
 
 .status.error {
   color: var(--danger);
+}
+
+.game-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 14px;
+  margin-top: 12px;
+}
+
+.game-actions .status {
+  flex: 1 1 260px;
+  margin: 0;
+}
+
+button.run-again {
+  flex: 0 0 auto;
+  padding: 7px 12px;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(255, 194, 71, 0.05);
 }
 
 /* 玩法说明：填充左侧纵向空间，保持终端风格 */
@@ -559,9 +587,9 @@ button.locate {
     outline: 2px solid transparent;
   }
   50% {
-    background: rgba(255, 194, 71, 0.55);
+    background: rgba(255, 194, 71, 0.92);
     outline: 2px solid var(--accent);
-    color: #000;
+    color: #140d00;
   }
 }
 

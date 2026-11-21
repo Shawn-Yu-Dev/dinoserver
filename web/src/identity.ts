@@ -5,17 +5,17 @@ const STORAGE_KEY = 'dino.username';
 const MAX_LEN = 24;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
 
-/** 校验并规范化昵称，不合法时抛出中文错误信息。 */
+/** Validate and normalize the player ID; throws an English error when invalid. */
 export function normalizeUsername(raw: string): string {
   const name = raw.trim();
   if (name === '') {
-    throw new Error('昵称不能为空');
+    throw new Error('PLAYER ID IS REQUIRED');
   }
   if ([...name].length > MAX_LEN) {
-    throw new Error(`昵称不能超过 ${MAX_LEN} 个字符`);
+    throw new Error(`PLAYER ID MUST BE AT MOST ${MAX_LEN} CHARACTERS`);
   }
   if (CONTROL_CHARS.test(name)) {
-    throw new Error('昵称不能包含控制字符');
+    throw new Error('PLAYER ID MUST NOT CONTAIN CONTROL CHARACTERS');
   }
   return name;
 }

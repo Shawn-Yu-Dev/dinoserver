@@ -69,7 +69,7 @@ func loadConfig() (config, error) {
 	if raw := os.Getenv("REDIS_DB"); raw != "" {
 		db, err := strconv.Atoi(raw)
 		if err != nil || db < 0 {
-			return config{}, fmt.Errorf("REDIS_DB 必须是非负整数，当前值 %q", raw)
+			return config{}, fmt.Errorf("REDIS_DB must be a non-negative integer, got %q", raw)
 		}
 		cfg.redisDB = db
 	}
@@ -114,7 +114,7 @@ func (s *server) routes() http.Handler {
 	// 未命中路由：/api/* 返回 JSON 404，其余交给静态资源（SPA 回退）。
 	r.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
-			writeError(c, http.StatusNotFound, "not_found", "接口不存在")
+			writeError(c, http.StatusNotFound, "not_found", "endpoint not found")
 			return
 		}
 		s.static.ServeHTTP(c.Writer, c.Request)
@@ -129,7 +129,7 @@ func (s *server) routes() http.Handler {
 func newStaticHandler() (http.Handler, error) {
 	dist, err := fs.Sub(embeddedAssets, "web/dist")
 	if err != nil {
-		return nil, fmt.Errorf("读取内嵌前端资源失败: %w", err)
+		return nil, fmt.Errorf("failed to load embedded frontend assets: %w", err)
 	}
 	files := http.FileServer(http.FS(dist))
 
@@ -163,8 +163,8 @@ func (s *server) handleHealth(c *gin.Context) {
 	defer cancel()
 
 	if err := s.rdb.Ping(ctx).Err(); err != nil {
-		log.Printf("health: redis ping 失败: %v", err)
-		writeError(c, http.StatusServiceUnavailable, "redis_unavailable", "Redis 暂不可用")
+		log.Printf("health: redis ping failed: %v", err)
+		writeError(c, http.StatusServiceUnavailable, "redis_unavailable", "Redis is unavailable")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -187,7 +187,7 @@ type submitScoreResponse struct {
 func (s *server) handleSubmitScore(c *gin.Context) {
 	var req scoreRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid_body", `请求体必须是 JSON，例如 {"username":"dino","score":1024}`)
+		writeError(c, http.StatusBadRequest, "invalid_body", `request body must be JSON, e.g. {"username":"dino","score":1024}`)
 		return
 	}
 
@@ -197,7 +197,7 @@ func (s *server) handleSubmitScore(c *gin.Context) {
 		return
 	}
 	if req.Score < 0 || req.Score > maxScore {
-		writeError(c, http.StatusBadRequest, "invalid_score", fmt.Sprintf("score 必须在 0 到 %d 之间", maxScore))
+		writeError(c, http.StatusBadRequest, "invalid_score", fmt.Sprintf("score must be between 0 and %d", maxScore))
 		return
 	}
 
@@ -366,7 +366,7 @@ func (s *server) handleMyRank(c *gin.Context) {
 		return
 	}
 	if errors.Is(rankCmd.Err(), redis.Nil) {
-		writeError(c, http.StatusNotFound, "player_not_found", "该玩家尚未上榜")
+		writeError(c, http.StatusNotFound, "player_not_found", "player is not ranked yet")
 		return
 	}
 	if err := firstCmdError(rankCmd.Err(), scoreCmd.Err(), totalCmd.Err()); err != nil {
@@ -412,14 +412,14 @@ func (s *server) handleMyRank(c *gin.Context) {
 func normalizeUsername(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
 	if name == "" {
-		return "", errors.New("username 不能为空")
+		return "", errors.New("username is required")
 	}
 	if utf8.RuneCountInString(name) > maxUsernameLen {
-		return "", fmt.Errorf("username 不能超过 %d 个字符", maxUsernameLen)
+		return "", fmt.Errorf("username must be at most %d characters", maxUsernameLen)
 	}
 	for _, r := range name {
 		if unicode.IsControl(r) {
-			return "", errors.New("username 不能包含控制字符")
+			return "", errors.New("username must not contain control characters")
 		}
 	}
 	return name, nil
@@ -430,7 +430,7 @@ func parsePagination(c *gin.Context) (page int64, limit int, err error) {
 	if raw := c.Query("page"); raw != "" {
 		page, err = strconv.ParseInt(raw, 10, 64)
 		if err != nil || page < 1 {
-			return 0, 0, errors.New("page 必须是正整数")
+			return 0, 0, errors.New("page must be a positive integer")
 		}
 	}
 	limit, err = parseLimit(c)
@@ -442,7 +442,7 @@ func parseLimit(c *gin.Context) (int, error) {
 	if raw := c.Query("limit"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 1 {
-			return 0, errors.New("limit 必须是正整数")
+			return 0, errors.New("limit must be a positive integer")
 		}
 		limit = n
 	}
@@ -462,8 +462,8 @@ func firstCmdError(errs ...error) error {
 }
 
 func (s *server) replyRedisError(c *gin.Context, err error) {
-	log.Printf("%s %s: redis 操作失败: %v", c.Request.Method, c.Request.URL.Path, err)
-	writeError(c, http.StatusServiceUnavailable, "redis_unavailable", "排行榜暂不可用，请稍后重试")
+	log.Printf("%s %s: redis operation failed: %v", c.Request.Method, c.Request.URL.Path, err)
+	writeError(c, http.StatusServiceUnavailable, "redis_unavailable", "leaderboard is temporarily unavailable, please retry")
 }
 
 func writeError(c *gin.Context, status int, code, message string) {
@@ -481,7 +481,7 @@ func requestLogger() gin.HandlerFunc {
 func main() {
 	cfg, err := loadConfig()
 	if err != nil {
-		log.Fatalf("配置错误: %v", err)
+		log.Fatalf("config error: %v", err)
 	}
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.ReleaseMode)
@@ -501,13 +501,13 @@ func main() {
 	pingCtx, cancelPing := context.WithTimeout(context.Background(), 5*time.Second)
 	if err := rdb.Ping(pingCtx).Err(); err != nil {
 		cancelPing()
-		log.Fatalf("无法连接 Redis (%s): %v", cfg.redisAddr, err)
+		log.Fatalf("cannot connect to Redis (%s): %v", cfg.redisAddr, err)
 	}
 	cancelPing()
 
 	srv, err := newServer(rdb, leaderboardKey)
 	if err != nil {
-		log.Fatalf("初始化服务失败: %v", err)
+		log.Fatalf("failed to initialize server: %v", err)
 	}
 
 	httpSrv := &http.Server{
@@ -520,9 +520,9 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("dinoserver 已启动: %s (redis=%s)", cfg.addr, cfg.redisAddr)
+		log.Printf("dinoserver listening on %s (redis=%s)", cfg.addr, cfg.redisAddr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("HTTP 服务异常退出: %v", err)
+			log.Fatalf("HTTP server exited unexpectedly: %v", err)
 		}
 	}()
 
@@ -531,10 +531,10 @@ func main() {
 	defer stop()
 	<-stopCtx.Done()
 
-	log.Println("收到退出信号，正在关闭服务...")
+	log.Println("shutdown signal received, closing server...")
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShutdown()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("服务关闭超时: %v", err)
+		log.Printf("server shutdown timed out: %v", err)
 	}
 }

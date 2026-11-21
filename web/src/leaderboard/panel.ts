@@ -31,13 +31,13 @@ export class LeaderboardPanel {
   async load(page: number): Promise<void> {
     const target = Math.min(Math.max(1, page), this.totalPages);
     const seq = ++this.requestSeq;
-    this.setLoading(true, '加载中…');
+    this.setLoading(true, 'LOADING…');
 
     try {
       const data = await fetchLeaderboard(target, PAGE_SIZE);
       if (seq !== this.requestSeq) return;
       this.render(data);
-      this.setMessage(`共 ${data.total} 位玩家`);
+      this.setMessage(`${data.total} RUNNERS RANKED`);
     } catch (err) {
       if (seq !== this.requestSeq) return;
       this.setMessage(errorText(err), true);
@@ -46,21 +46,25 @@ export class LeaderboardPanel {
     }
   }
 
-  /** 定位到当前玩家：切换到其所在页，平滑滚动到该行并闪烁高亮。 */
-  async locateMe(): Promise<void> {
+  /**
+   * 定位到当前玩家：切换到其所在页并高亮。
+   * scroll 为 false 时只更新面板与高亮，不滚动页面——自动提交后使用，
+   * 避免把游戏画面滚出视口导致官方引擎拒绝空格重开。
+   */
+  async locateMe(scroll = true): Promise<void> {
     const seq = ++this.requestSeq;
-    this.setLoading(true, '定位中…');
+    this.setLoading(true, 'LOCATING…');
 
     try {
       const data = await fetchMyRank(this.getUsername(), PAGE_SIZE);
       if (seq !== this.requestSeq) return;
       this.render(data);
-      this.setMessage(`你的名次：#${data.me.rank} · ${data.me.score} 分`);
-      this.focusMyRow();
+      this.setMessage(`YOUR RANK #${data.me.rank} · ${data.me.score} PTS`);
+      this.focusMyRow(scroll);
     } catch (err) {
       if (seq !== this.requestSeq) return;
       if (err instanceof ApiError && err.status === 404) {
-        this.setMessage('你尚未上榜，先玩一局吧', true);
+        this.setMessage('NOT RANKED YET — PLAY A ROUND', true);
       } else {
         this.setMessage(errorText(err), true);
       }
@@ -101,11 +105,13 @@ export class LeaderboardPanel {
   }
 
   /** 滚动到 is_me 行并触发闪烁动画。 */
-  private focusMyRow(): void {
+  private focusMyRow(scroll: boolean): void {
     const row = this.els.list.querySelector<HTMLLIElement>('li.is-me');
     if (!row) return;
 
-    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (scroll) {
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
     // 先移除再添加 class，确保每次定位都能重新播放动画
     row.classList.remove('flash');
     void row.offsetWidth;
@@ -134,5 +140,5 @@ export class LeaderboardPanel {
 }
 
 function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : '未知错误';
+  return err instanceof Error ? err.message.toUpperCase() : 'UNKNOWN ERROR';
 }
