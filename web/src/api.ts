@@ -1,4 +1,5 @@
 // 后端 API 客户端：统一封装请求与错误处理，与 main.go 的响应结构保持一致。
+import type { ReplayData } from './game/replay';
 
 export interface Entry {
   rank: number;
@@ -64,11 +65,15 @@ export function fetchMyRank(username: string, limit: number): Promise<MyRankPage
   return request<MyRankPage>(`/api/leaderboard/me?${query.toString()}`);
 }
 
-/** 提交成绩：POST /api/score */
-export function submitScore(username: string, score: number): Promise<SubmitResult> {
+/** 提交成绩与可选录像：POST /api/score */
+export function submitScore(
+  username: string,
+  score: number,
+  replay?: ReplayData | null,
+): Promise<SubmitResult> {
   return request<SubmitResult>('/api/score', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, score }),
+    body: JSON.stringify(replay ? { username, score, replay } : { username, score }),
   });
 }

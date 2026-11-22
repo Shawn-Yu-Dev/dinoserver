@@ -1,5 +1,6 @@
 import './style.css';
 import { submitScore } from './api';
+import type { ReplayData } from './game/replay';
 import { ChromeDinoGame } from './game/runner';
 import { getUsername, setUsername } from './identity';
 import { LeaderboardPanel } from './leaderboard/panel';
@@ -15,6 +16,7 @@ function $<T extends HTMLElement>(selector: string): T {
 const statusEl = $<HTMLElement>('#status');
 const screenEl = $<HTMLElement>('.screen');
 const runAgainBtn = $<HTMLButtonElement>('#run-again');
+const replayBtn = $<HTMLButtonElement>('#replay');
 const identity = {
   form: $<HTMLFormElement>('#identity-form'),
   input: $<HTMLInputElement>('#identity-input'),
@@ -42,6 +44,8 @@ function setStatus(text: string, isError = false): void {
 
 let best = Number(localStorage.getItem(BEST_KEY)) || 0;
 let lastGameOverAt = 0;
+/** 最近一局的录像，用于 REPLAY 按钮。 */
+let lastReplay: ReplayData | null = null;
 
 function keepHighScore(score: number): void {
   if (!Number.isFinite(score) || score <= best) return;
@@ -56,18 +60,38 @@ const game = new ChromeDinoGame('#dino-game', {
   onStart: () => {
     setStatus('');
     runAgainBtn.disabled = true;
+    replayBtn.disabled = true;
   },
   onHighScore: keepHighScore,
-  onGameOver: (score) => {
+  onGameOver: (score, replay) => {
     lastGameOverAt = performance.now();
+    lastReplay = replay;
     runAgainBtn.disabled = false;
+    replayBtn.disabled = !replay;
     if (score <= 0) {
       setStatus('SCORE 0 · PLAY AGAIN');
       return;
     }
     setStatus(`SCORE ${score} · SUBMITTING…`);
-    void uploadScore(score);
+    void uploadScore(score, replay);
   },
+  onReplayStart: () => {
+    setStatus('REPLAYING…');
+    runAgainBtn.disabled = true;
+    replayBtn.disabled = true;
+  },
+  onReplayEnd: (score) => {
+    setStatus(`REPLAY FINISHED · SCORE ${score}`);
+    runAgainBtn.disabled = false;
+    replayBtn.disabled = !lastReplay;
+  },
+});
+
+// ---------- Replay ----------
+
+replayBtn.addEventListener('click', () => {
+  if (!lastReplay) return;
+  game.playReplay(lastReplay);
 });
 
 /**
@@ -102,10 +126,10 @@ document.addEventListener('keydown', (e) => {
   void restartRun();
 });
 
-/** 自动提交成绩，成功后刷新排行榜并高亮自己（不滚动页面）。 */
-async function uploadScore(score: number): Promise<void> {
+/** 自动提交成绩与录像，成功后刷新排行榜并高亮自己（不滚动页面）。 */
+async function uploadScore(score: number, replay: ReplayData | null): Promise<void> {
   try {
-    const result = await submitScore(getUsername(), score);
+    const result = await submitScore(getUsername(), score, replay);
     setStatus(`RANK #${result.rank} / ${result.total} · BEST ${result.score} · PLAY AGAIN`);
     await panel.locateMe(false);
   } catch (err) {

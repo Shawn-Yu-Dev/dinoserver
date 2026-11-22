@@ -5,6 +5,15 @@ export interface DistanceMeter {
   setHighScore(highScore: number): void;
 }
 
+/** 官方 handleEvent 所需的最小事件形状（用于回放注入）。 */
+export interface RunnerKeyEvent {
+  type: string;
+  keyCode: number;
+  target: EventTarget | null;
+  button?: number;
+  preventDefault(): void;
+}
+
 export interface RunnerInstance {
   playing: boolean;
   crashed: boolean;
@@ -14,6 +23,7 @@ export interface RunnerInstance {
   setPlayStatus(playing: boolean): void;
   gameOver(): void;
   restart(): void;
+  handleEvent(event: RunnerKeyEvent): void;
 }
 
 export interface RunnerConstructor {

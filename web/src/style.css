@@ -281,14 +281,28 @@ body {
   margin: 0;
 }
 
-button.run-again {
+.game-buttons {
+  display: flex;
   flex: 0 0 auto;
+  gap: 8px;
+}
+
+.game-buttons button {
   padding: 7px 12px;
   font-size: 10px;
   letter-spacing: 0.16em;
+}
+
+button.run-again {
   border-color: var(--accent);
   color: var(--accent);
   background: rgba(255, 194, 71, 0.05);
+}
+
+button.replay {
+  border-color: var(--fg-dim);
+  color: var(--fg);
+  background: rgba(157, 255, 176, 0.04);
 }
 
 /* 玩法说明：填充左侧纵向空间，保持终端风格 */
