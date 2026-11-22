@@ -25,7 +25,8 @@
     │   ├── identity.ts      # localStorage 昵称
     │   ├── style.css        # 复古极客风样式与 CRT 扫描线
     │   ├── game/
-    │   │   ├── runner.ts    # 官方引擎适配层：最高分、结束回调、输入隔离
+    │   │   ├── runner.ts    # 官方引擎适配层：最高分、结束回调、录像录制与回放
+    │   │   ├── replay.ts    # 录像类型、mulberry32、seed 生成与校验
     │   │   └── chrome/      # 原样引入的 Chromium 130 源码与许可
     │   │       ├── offline.js
     │   │       ├── offline-sprite-definitions.js
@@ -91,12 +92,24 @@ npm run build    # 类型检查并输出 web/dist
 
 ### `POST /api/score`
 
-提交成绩。Redis 使用 `ZADD ... GT`，同一用户名只保留历史最高分，低分不会覆盖高分。
+提交成绩。Redis 使用 `ZADD ... GT`，同一用户名只保留历史最高分，低分不会覆盖高分。可选的 `replay` 字段携带本局录像，当前后端会忽略该字段（存储与压缩留待后续阶段）。
 
 ```bash
 curl -X POST http://localhost:8080/api/score \
   -H 'Content-Type: application/json' \
-  -d '{"username":"dino","score":1024}'
+  -d '{
+    "username": "dino",
+    "score": 1024,
+    "replay": {
+      "v": 1,
+      "seed": 915707037,
+      "duration": 5782,
+      "inputs": [
+        { "t": 2, "a": "jump" },
+        { "t": 10, "a": "release", "k": "jump" }
+      ]
+    }
+  }'
 ```
 
 ```json
@@ -153,7 +166,7 @@ Redis 可用时返回 `{"status":"ok"}`。
 - 源码：`web/src/game/chrome/`，详见该目录下的 `README.md`
 - 许可：BSD-3-Clause，许可全文见 `web/src/game/chrome/LICENSE`
 - 唯一源码改动：将 `chrome://resources/js/load_time_data.js` 的 import 指向本地最小桩
-- 适配层 `web/src/game/runner.ts` 只做三件事：载入本地最高分、包装 `gameOver()` 上报最终分数、包装 `setPlayStatus()` 通知 UI 开局
+- 适配层 `web/src/game/runner.ts` 负责：载入本地最高分、包装 `gameOver()` 上报最终分数与录像、包装 `setPlayStatus()` 通知 UI 并开始录制
 
 ### 操作
 
@@ -164,6 +177,7 @@ Redis 可用时返回 `{"status":"ok"}`。
 | 触摸画面 | 移动端开始游戏、跳跃 |
 | 点击画布 / `Enter` / 结束 1.2s 后 `Space` | 撞击后重新开始（桌面端） |
 | `▶ RUN AGAIN` | 撞击后随时重开，不受冷却与页面滚动影响 |
+| `⟲ REPLAY` | 用最近一局的 seed 与输入时间轴原地回放 |
 
 界面文案全部为英文（`<html lang="en">`），服务端返回的错误信息同为英文。
 
@@ -171,7 +185,7 @@ Redis 可用时返回 `{"status":"ok"}`。
 
 - 分数由官方 `DistanceMeter.getActualDistance()` 计算，并与画布右上角显示一致。
 - 最高分保存在 `localStorage`，开局时回填官方画布的 `HI`；官方 `errorPageController` 桥接到本地存储。
-- 游戏结束后自动 `POST /api/score`，成功后刷新排行榜并高亮自己；自动刷新**不滚动页面**，避免把游戏画布滚出视口。
+- 游戏结束后自动 `POST /api/score`（附本局录像），成功后刷新排行榜并高亮自己；自动刷新**不滚动页面**，避免把游戏画布滚出视口。
 - 官方键盘重开受 `isCanvasInView()` 限制：页面被排行榜滚动后，空格由 UI 接管，直接调用官方 `restart()` 并平滑滚回游戏；`RUN AGAIN` 按钮同样绕过该限制，因此可以无限重复游玩。
 - 昵称输入框内阻止按键冒泡，避免编辑昵称时误触恐龙跳跃。
 - 官方画布通过 CSS filter 转为荧光绿终端配色，外层叠加 CRT 扫描线，不修改渲染代码。
@@ -182,6 +196,57 @@ Redis 可用时返回 `{"status":"ok"}`。
 - “LOCATE ME” 请求 `/api/leaderboard/me`，自动切换到玩家所在页，通过 `scrollIntoView({ behavior: 'smooth', block: 'center' })` 居中，并对 `is_me` 行播放 4 次闪烁高亮；未上榜时给出提示。
 - 快速连续翻页时用请求序号丢弃过期响应，避免旧数据覆盖新页面。
 - 昵称保存在 `localStorage`，首次访问自动生成 `DINO-XXXX`，可在面板中修改。
+
+## 录像与回放
+
+最小可用版本：录制 seed 与输入时间轴、随成绩提交、在同一画布回放。
+
+### 数据格式
+
+```json
+{
+  "v": 1,
+  "seed": 915707037,
+  "duration": 5782,
+  "inputs": [
+    { "t": 2, "a": "jump" },
+    { "t": 10, "a": "release", "k": "jump" },
+    { "t": 830, "a": "duck" },
+    { "t": 1180, "a": "release", "k": "duck" }
+  ]
+}
+```
+
+- `t`：相对开局的毫秒时间戳
+- `a`：`jump` / `duck` / `release`
+- `k`：仅 `release` 使用，标明释放跳跃键或蹲下键
+- `duration`：本局时长，便于后续服务端校验与压缩
+
+### 录制
+
+- 真正开局时（`setPlayStatus(true)`）生成 32 位 seed，并用 `mulberry32` **临时替换** `Math.random`，结束或回放结束时恢复。
+- 在 `document` 上旁路监听键盘与指针输入，不修改官方 `offline.js`：
+  - `Space` / `↑` → `jump`，`↓` → `duck`
+  - 对应按键释放 → `release`
+  - 画布内 `pointerdown` / `pointerup` → `jump` / `release`
+- 首次开局的起跳可能先于/后于录制器执行，使用 `pendingStartJump` 保证恰好记录一次。
+- 暂停/恢复不会重新播种；只在新一局开始时创建新录像。
+
+### 提交
+
+`submitScore(username, score, replay?)` 会在 body 中附带录像；后端当前忽略该字段，不影响原有成绩写入。
+
+### 回放
+
+- `playReplay(replay)`：校验录像 → 用同 seed 设置 PRNG → `scrollIntoView` 保证画布可见 → 调用官方 `restart()` → 按时间轴注入输入。
+- 输入通过官方 `handleEvent()` 直接注入，避免合成 `KeyboardEvent` 的 `keyCode` 兼容问题。
+- 使用自校正的 `setTimeout` 链，保留亚帧按键时机。
+- 回放期间吞掉真实用户输入，不重复提交成绩，也不改写最高分与 `localStorage`。
+- UI 提供 `⟲ REPLAY` 按钮，可重复回放最近一局。
+
+### 已知边界
+
+官方引擎按真实帧间隔推进（`performance.now()` + `requestAnimationFrame`），seed 只能保证随机序列，无法保证逐帧时间一致；云层等背景随机调用还会影响随机数消费顺序。因此回放分数可能与原局相差数分（实测 49 → 44/45），但回放流程、输入注入与“不回放成绩”均正常。要做到逐帧一致，需要固定步长循环或记录帧时间轴，留待后续阶段；录像压缩与服务端存储同理。
 
 ## 静态资源托管
 
@@ -203,8 +268,9 @@ GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o d
 - [x] 阶段 1：后端核心（静态内嵌、提交成绩、分页排行、定位我的排名）
 - [x] 阶段 2：游戏主体与排行榜 UI（Canvas 循环、物理、碰撞、计分、分页与定位面板）
 - [x] 阶段 3：Chromium 官方 dino 引擎、复古终端视觉、全英文界面、重复游玩修复
-- [ ] 阶段 4：录像采集、压缩存储与回放
-- [ ] 阶段 5：反作弊、限流与运维加固
+- [x] 阶段 4：录像采集与回放（seed + 输入时间轴、随成绩提交、REPLAY 按钮）
+- [ ] 阶段 5：录像压缩与服务端存储
+- [ ] 阶段 6：反作弊、限流与运维加固
 
 ## 分支与协作
 

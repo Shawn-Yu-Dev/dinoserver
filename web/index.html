@@ -43,7 +43,10 @@
 
           <div class="game-actions">
             <p id="status" class="status" aria-live="polite">PRESS SPACE TO RUN</p>
-            <button id="run-again" class="run-again" type="button" disabled>▶ RUN AGAIN</button>
+            <div class="game-buttons">
+              <button id="replay" class="replay" type="button" disabled>⟲ REPLAY</button>
+              <button id="run-again" class="run-again" type="button" disabled>▶ RUN AGAIN</button>
+            </div>
           </div>
 
           <div class="guide" aria-label="How to play">
@@ -58,6 +61,10 @@
             <div class="guide-row">
               <span class="guide-index">03</span>
               <p><b>LOCATE</b>Jump to your rank page and blink your row.</p>
+            </div>
+            <div class="guide-row">
+              <span class="guide-index">04</span>
+              <p><b>REPLAY</b>Re-run the last attempt with the same seed and inputs.</p>
             </div>
           </div>
         </section>
