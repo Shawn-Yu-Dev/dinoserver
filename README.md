@@ -92,7 +92,12 @@ npm run build    # 类型检查并输出 web/dist
 
 ### `POST /api/score`
 
-提交成绩。Redis 使用 `ZADD ... GT`，同一用户名只保留历史最高分，低分不会覆盖高分。可选的 `replay` 字段携带本局录像，当前后端会忽略该字段（存储与压缩留待后续阶段）。
+提交成绩。Redis 使用 `ZADD ... GT`，同一用户名只保留历史最高分，低分不会覆盖高分。可选的 `replay` 字段携带本局录像：
+
+- 合法录像存入 `replay:{username}`，仅当本次分数不低于当前最高分时覆盖；
+- 新的最高分没有携带合法录像时，删除旧录像，保证录像始终对应当前最高分；
+- `ZADD` 与录像写入在同一个 Lua 脚本内完成，避免并发下排行榜与录像错位；
+- 非法、超过 32KB 或输入超过 5000 条的录像会被丢弃，**成绩仍然提交成功**。
 
 ```bash
 curl -X POST http://localhost:8080/api/score \
@@ -129,11 +134,13 @@ curl -X POST http://localhost:8080/api/score \
   "total": 4,
   "total_pages": 2,
   "entries": [
-    { "rank": 1, "username": "dave", "score": 300, "is_me": false },
-    { "rank": 2, "username": "bob", "score": 200, "is_me": false }
+    { "rank": 1, "username": "dave", "score": 300, "is_me": false, "has_replay": true },
+    { "rank": 2, "username": "bob", "score": 200, "is_me": false, "has_replay": false }
   ]
 }
 ```
+
+`has_replay` 表示该玩家当前最高分是否存有录像，前端据此显示 `WATCH` 按钮。
 
 ### `GET /api/leaderboard/me?username=dino&limit=20`
 
@@ -147,9 +154,22 @@ curl -X POST http://localhost:8080/api/score \
   "total_pages": 2,
   "me": { "rank": 3, "username": "alice", "score": 100, "page": 2 },
   "entries": [
-    { "rank": 3, "username": "alice", "score": 100, "is_me": true },
-    { "rank": 4, "username": "carol", "score": 50, "is_me": false }
+    { "rank": 3, "username": "alice", "score": 100, "is_me": true, "has_replay": true },
+    { "rank": 4, "username": "carol", "score": 50, "is_me": false, "has_replay": false }
   ]
+}
+```
+
+### `GET /api/replay?username=dino`
+
+返回该玩家当前最高分对应的录像 JSON（格式见下文）。未存储录像时返回 `404 replay_not_found`，用户名为空或非法时返回 `400 invalid_username`。
+
+```json
+{
+  "v": 1,
+  "seed": 915707037,
+  "duration": 5782,
+  "inputs": [{ "t": 1, "a": "jump" }, { "t": 8, "a": "release", "k": "jump" }]
 }
 ```
 
@@ -178,6 +198,7 @@ Redis 可用时返回 `{"status":"ok"}`。
 | 点击画布 / `Enter` / 结束 1.2s 后 `Space` | 撞击后重新开始（桌面端） |
 | `▶ RUN AGAIN` | 撞击后随时重开，不受冷却与页面滚动影响 |
 | `⟲ REPLAY` | 用最近一局的 seed 与输入时间轴原地回放 |
+| `WATCH` | 观看排行榜中已保存录像的玩家（含自己） |
 
 界面文案全部为英文（`<html lang="en">`），服务端返回的错误信息同为英文。
 
@@ -199,7 +220,7 @@ Redis 可用时返回 `{"status":"ok"}`。
 
 ## 录像与回放
 
-最小可用版本：录制 seed 与输入时间轴、随成绩提交、在同一画布回放。
+录制 seed 与输入时间轴、随成绩提交、在 Redis 保存最高分录像、在同一画布回放自己或他人的录像。
 
 ### 数据格式
 
@@ -232,9 +253,16 @@ Redis 可用时返回 `{"status":"ok"}`。
 - 首次开局的起跳可能先于/后于录制器执行，使用 `pendingStartJump` 保证恰好记录一次。
 - 暂停/恢复不会重新播种；只在新一局开始时创建新录像。
 
-### 提交
+### 提交与存储
 
-`submitScore(username, score, replay?)` 会在 body 中附带录像；后端当前忽略该字段，不影响原有成绩写入。
+`submitScore(username, score, replay?)` 会在 body 中附带录像。后端校验并规范化后：
+
+- 存入 Redis String `replay:{username}`，只保留当前最高分对应的那一条；
+- 分数低于当前最高分：不写录像；
+- 分数不低于当前最高分且录像合法：覆盖；
+- 新最高分但录像非法/超限/缺失：删除旧录像；
+- 限制：单条 JSON ≤ 32KB、输入 ≤ 5000 条、时长 ≤ 24 小时、请求体 ≤ 512KB；
+- 校验失败只丢弃录像，成绩照常写入。
 
 ### 回放
 
@@ -242,11 +270,13 @@ Redis 可用时返回 `{"status":"ok"}`。
 - 输入通过官方 `handleEvent()` 直接注入，避免合成 `KeyboardEvent` 的 `keyCode` 兼容问题。
 - 使用自校正的 `setTimeout` 链，保留亚帧按键时机。
 - 回放期间吞掉真实用户输入，不重复提交成绩，也不改写最高分与 `localStorage`。
-- UI 提供 `⟲ REPLAY` 按钮，可重复回放最近一局。
+- UI 提供 `⟲ REPLAY`（最近一局）与排行榜行内 `WATCH`（他人或自己的服务端录像）；观看时状态栏显示 `REPLAYING {username}…`，结束后恢复按钮。
+- 点击 `WATCH` 会请求 `GET /api/replay?username=...`，再调用同一个 `playReplay()`。
+- 当前最高分没有录像时不会显示 `WATCH`；`GET /api/replay` 返回 404 时状态栏提示 `NO REPLAY FOR ...`。
 
 ### 已知边界
 
-官方引擎按真实帧间隔推进（`performance.now()` + `requestAnimationFrame`），seed 只能保证随机序列，无法保证逐帧时间一致；云层等背景随机调用还会影响随机数消费顺序。因此回放分数可能与原局相差数分（实测 49 → 44/45），但回放流程、输入注入与“不回放成绩”均正常。要做到逐帧一致，需要固定步长循环或记录帧时间轴，留待后续阶段；录像压缩与服务端存储同理。
+官方引擎按真实帧间隔推进（`performance.now()` + `requestAnimationFrame`），seed 只能保证随机序列，无法保证逐帧时间一致；云层等背景随机调用还会影响随机数消费顺序。因此回放分数可能与原局相差数分（实测 49 → 44/45），但回放流程、输入注入与“不回放成绩”均正常。要做到逐帧一致，需要固定步长循环或记录帧时间轴；录像压缩与二进制格式同理，留待后续阶段。
 
 ## 静态资源托管
 
@@ -268,9 +298,9 @@ GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o d
 - [x] 阶段 1：后端核心（静态内嵌、提交成绩、分页排行、定位我的排名）
 - [x] 阶段 2：游戏主体与排行榜 UI（Canvas 循环、物理、碰撞、计分、分页与定位面板）
 - [x] 阶段 3：Chromium 官方 dino 引擎、复古终端视觉、全英文界面、重复游玩修复
-- [x] 阶段 4：录像采集与回放（seed + 输入时间轴、随成绩提交、REPLAY 按钮）
-- [ ] 阶段 5：录像压缩与服务端存储
-- [ ] 阶段 6：反作弊、限流与运维加固
+- [x] 阶段 4：录像采集、Redis 存储与回放（seed + 输入时间轴、WATCH 他人录像）
+- [ ] 阶段 5：录像压缩、回放反作弊校验
+- [ ] 阶段 6：限流与运维加固
 
 ## 分支与协作
 

@@ -1,5 +1,5 @@
 import './style.css';
-import { submitScore } from './api';
+import { ApiError, fetchReplay, submitScore } from './api';
 import type { ReplayData } from './game/replay';
 import { ChromeDinoGame } from './game/runner';
 import { getUsername, setUsername } from './identity';
@@ -33,6 +33,7 @@ const panel = new LeaderboardPanel(
     message: $<HTMLElement>('#board-msg'),
   },
   getUsername,
+  (username) => void watchReplay(username),
 );
 
 function setStatus(text: string, isError = false): void {
@@ -44,8 +45,12 @@ function setStatus(text: string, isError = false): void {
 
 let best = Number(localStorage.getItem(BEST_KEY)) || 0;
 let lastGameOverAt = 0;
-/** 最近一局的录像，用于 REPLAY 按钮。 */
+/** 最近一局的录像，用于本地 REPLAY 按钮。 */
 let lastReplay: ReplayData | null = null;
+/** 正在观看的录像所属玩家；本地回放时为 null。 */
+let replayOwner: string | null = null;
+/** 观看请求序号：开始新一局或再次点击时丢弃过期响应。 */
+let watchSeq = 0;
 
 function keepHighScore(score: number): void {
   if (!Number.isFinite(score) || score <= best) return;
@@ -58,6 +63,8 @@ function keepHighScore(score: number): void {
 const game = new ChromeDinoGame('#dino-game', {
   bestScore: best,
   onStart: () => {
+    watchSeq++;
+    replayOwner = null;
     setStatus('');
     runAgainBtn.disabled = true;
     replayBtn.disabled = true;
@@ -76,12 +83,19 @@ const game = new ChromeDinoGame('#dino-game', {
     void uploadScore(score, replay);
   },
   onReplayStart: () => {
-    setStatus('REPLAYING…');
+    // 开始回放后，任何仍在途的观看请求都应失效。
+    watchSeq++;
+    setStatus(replayOwner ? `REPLAYING ${replayOwner}…` : 'REPLAYING…');
     runAgainBtn.disabled = true;
     replayBtn.disabled = true;
   },
   onReplayEnd: (score) => {
-    setStatus(`REPLAY FINISHED · SCORE ${score}`);
+    setStatus(
+      replayOwner
+        ? `REPLAY FINISHED · ${replayOwner} · SCORE ${score}`
+        : `REPLAY FINISHED · SCORE ${score}`,
+    );
+    replayOwner = null;
     runAgainBtn.disabled = false;
     replayBtn.disabled = !lastReplay;
   },
@@ -91,8 +105,40 @@ const game = new ChromeDinoGame('#dino-game', {
 
 replayBtn.addEventListener('click', () => {
   if (!lastReplay) return;
+  replayOwner = null;
   game.playReplay(lastReplay);
 });
+
+/** 从排行榜观看他人的最高分录像。 */
+async function watchReplay(username: string): Promise<void> {
+  if (game.isReplaying) return;
+  if (!game.crashed) {
+    setStatus('FINISH THE CURRENT RUN TO WATCH A REPLAY', true);
+    return;
+  }
+
+  const seq = ++watchSeq;
+  setStatus(`LOADING ${username}'S REPLAY…`);
+
+  try {
+    const data = await fetchReplay(username);
+    if (seq !== watchSeq) return;
+    replayOwner = username;
+    if (!game.playReplay(data)) {
+      replayOwner = null;
+      setStatus(`REPLAY UNAVAILABLE FOR ${username}`, true);
+    }
+  } catch (err) {
+    if (seq !== watchSeq) return;
+    replayOwner = null;
+    if (err instanceof ApiError && err.status === 404) {
+      setStatus(`NO REPLAY FOR ${username}`, true);
+    } else {
+      const message = err instanceof Error ? err.message.toUpperCase() : 'UNKNOWN ERROR';
+      setStatus(`REPLAY FAILED: ${message}`, true);
+    }
+  }
+}
 
 /**
  * 直接调用官方 restart()，不依赖 isCanvasInView()。
@@ -130,11 +176,16 @@ document.addEventListener('keydown', (e) => {
 async function uploadScore(score: number, replay: ReplayData | null): Promise<void> {
   try {
     const result = await submitScore(getUsername(), score, replay);
-    setStatus(`RANK #${result.rank} / ${result.total} · BEST ${result.score} · PLAY AGAIN`);
+    // 回放中不要覆盖 REPLAYING 状态。
+    if (!game.isReplaying) {
+      setStatus(`RANK #${result.rank} / ${result.total} · BEST ${result.score} · PLAY AGAIN`);
+    }
     await panel.locateMe(false);
   } catch (err) {
-    const text = err instanceof Error ? err.message.toUpperCase() : 'UNKNOWN ERROR';
-    setStatus(`SUBMIT FAILED: ${text}`, true);
+    if (!game.isReplaying) {
+      const text = err instanceof Error ? err.message.toUpperCase() : 'UNKNOWN ERROR';
+      setStatus(`SUBMIT FAILED: ${text}`, true);
+    }
   }
 }
 

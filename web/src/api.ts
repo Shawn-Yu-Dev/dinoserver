@@ -6,6 +6,8 @@ export interface Entry {
   username: string;
   score: number;
   is_me: boolean;
+  /** 后端是否保存了该玩家当前最高分的录像 */
+  has_replay?: boolean;
 }
 
 export interface LeaderboardPage {
@@ -63,6 +65,12 @@ export function fetchLeaderboard(page: number, limit: number): Promise<Leaderboa
 export function fetchMyRank(username: string, limit: number): Promise<MyRankPage> {
   const query = new URLSearchParams({ username, limit: String(limit) });
   return request<MyRankPage>(`/api/leaderboard/me?${query.toString()}`);
+}
+
+/** 获取玩家最高分对应的录像：GET /api/replay?username=xxx */
+export function fetchReplay(username: string): Promise<ReplayData> {
+  const query = new URLSearchParams({ username });
+  return request<ReplayData>(`/api/replay?${query.toString()}`);
 }
 
 /** 提交成绩与可选录像：POST /api/score */

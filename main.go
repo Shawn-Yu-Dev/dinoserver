@@ -18,6 +18,7 @@ package main
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -47,6 +48,12 @@ const (
 	defaultPageSize = 20
 	maxPageSize     = 100
 	redisTimeout    = 3 * time.Second
+
+	// 录像限制：单条 JSON 上限 32KB，请求体额外留出余量。
+	maxReplayBytes      = 32 * 1024
+	maxScoreBodyBytes   = 512 * 1024
+	maxReplayInputs     = 5000
+	maxReplayDurationMs = 24 * 60 * 60 * 1000
 )
 
 //go:embed all:web/dist
@@ -109,6 +116,7 @@ func (s *server) routes() http.Handler {
 		api.POST("/score", s.handleSubmitScore)
 		api.GET("/leaderboard", s.handleLeaderboard)
 		api.GET("/leaderboard/me", s.handleMyRank)
+		api.GET("/replay", s.handleGetReplay)
 	}
 
 	// 未命中路由：/api/* 返回 JSON 404，其余交给静态资源（SPA 回退）。
@@ -173,8 +181,9 @@ func (s *server) handleHealth(c *gin.Context) {
 // ---------- 提交成绩 ----------
 
 type scoreRequest struct {
-	Username string `json:"username"`
-	Score    int64  `json:"score"`
+	Username string          `json:"username"`
+	Score    int64           `json:"score"`
+	Replay   json.RawMessage `json:"replay"`
 }
 
 type submitScoreResponse struct {
@@ -184,7 +193,58 @@ type submitScoreResponse struct {
 	Total    int64  `json:"total"` // 上榜总人数
 }
 
+// 录像格式与 web/src/game/replay.ts 保持一致。
+type replayInput struct {
+	T int64  `json:"t"`
+	A string `json:"a"`
+	K string `json:"k,omitempty"`
+}
+
+type replayPayload struct {
+	V        int           `json:"v"`
+	Seed     int64         `json:"seed"`
+	Duration int64         `json:"duration"`
+	Inputs   []replayInput `json:"inputs"`
+}
+
+// submitScoreScript 原子完成「ZADD GT + 最高分录像写入」。
+// 避免并发提交时出现排行榜已是新最高分、录像却是旧成绩的错位。
+//
+// KEYS[1] 排行榜 ZSET，KEYS[2] 录像 key
+// ARGV[1] score，ARGV[2] username，ARGV[3] 合法 replay JSON（空串表示没有）
+var submitScoreScript = redis.NewScript(`
+local previous = redis.call('ZSCORE', KEYS[1], ARGV[2])
+local previousScore = previous and tonumber(previous) or nil
+
+redis.call('ZADD', KEYS[1], 'GT', ARGV[1], ARGV[2])
+local best = tonumber(redis.call('ZSCORE', KEYS[1], ARGV[2]))
+
+local stored = 0
+if ARGV[3] ~= '' then
+  if not previousScore or tonumber(ARGV[1]) >= previousScore then
+    redis.call('SET', KEYS[2], ARGV[3])
+    stored = 1
+  end
+elseif previousScore and tonumber(ARGV[1]) > previousScore then
+  -- 新的最高分没有录像：删除旧录像，保证录像始终对应当前最高分。
+  redis.call('DEL', KEYS[2])
+end
+
+return {
+  best,
+  redis.call('ZREVRANK', KEYS[1], ARGV[2]),
+  redis.call('ZCARD', KEYS[1]),
+  stored
+}
+`)
+
+func replayKey(username string) string {
+	return "replay:" + username
+}
+
 func (s *server) handleSubmitScore(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxScoreBodyBytes)
+
 	var req scoreRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		writeError(c, http.StatusBadRequest, "invalid_body", `request body must be JSON, e.g. {"username":"dino","score":1024}`)
@@ -201,50 +261,136 @@ func (s *server) handleSubmitScore(c *gin.Context) {
 		return
 	}
 
+	// 非法或超限的录像直接丢弃，不影响本次成绩提交。
+	replayJSON := ""
+	if len(req.Replay) > 0 {
+		if valid, ok := normalizeReplay(req.Replay); ok {
+			replayJSON = string(valid)
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(c.Request.Context(), redisTimeout)
 	defer cancel()
 
-	// 核心写入：ZADD key GT score member。
-	// GT 表示仅当新分数高于已有分数时才更新；对不存在的成员则直接插入。
-	// 因此同一玩家的历史最佳成绩不会被更低的分数覆盖。
-	zadd := redis.ZAddArgs{
-		GT:      true,
-		Members: []redis.Z{{Score: float64(req.Score), Member: name}},
-	}
-	if err := s.rdb.ZAddArgs(ctx, s.key, zadd).Err(); err != nil {
+	result, err := submitScoreScript.Run(
+		ctx,
+		s.rdb,
+		[]string{s.key, replayKey(name)},
+		req.Score,
+		name,
+		replayJSON,
+	).Result()
+	if err != nil {
 		s.replyRedisError(c, err)
 		return
 	}
 
-	// 写入后通过一次 pipeline 取回最佳分数、名次与总人数，避免额外网络往返。
-	pipe := s.rdb.Pipeline()
-	scoreCmd := pipe.ZScore(ctx, s.key, name)
-	rankCmd := pipe.ZRevRank(ctx, s.key, name)
-	totalCmd := pipe.ZCard(ctx, s.key)
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		s.replyRedisError(c, err)
+	values, ok := result.([]interface{})
+	if !ok || len(values) != 4 {
+		log.Printf("unexpected replay script result: %#v", result)
+		writeError(c, http.StatusInternalServerError, "internal_error", "unexpected server response")
 		return
 	}
-	if err := firstCmdError(scoreCmd.Err(), rankCmd.Err(), totalCmd.Err()); err != nil {
-		s.replyRedisError(c, err)
+	best, okBest := values[0].(int64)
+	rank, okRank := values[1].(int64)
+	total, okTotal := values[2].(int64)
+	if !okBest || !okRank || !okTotal {
+		log.Printf("unexpected replay script result types: %#v", values)
+		writeError(c, http.StatusInternalServerError, "internal_error", "unexpected server response")
 		return
 	}
 
 	c.JSON(http.StatusOK, submitScoreResponse{
 		Username: name,
-		Score:    int64(math.Round(scoreCmd.Val())),
-		Rank:     rankCmd.Val() + 1, // ZREVRANK 从 0 开始，对外用 1 起始
-		Total:    totalCmd.Val(),
+		Score:    best,
+		Rank:     rank + 1, // ZREVRANK 从 0 开始，对外用 1 起始
+		Total:    total,
 	})
+}
+
+// normalizeReplay 校验并规范化录像 JSON。
+// 返回规范化后的字节（剥离未知字段）；任何不合法都返回 false。
+func normalizeReplay(raw json.RawMessage) ([]byte, bool) {
+	if len(raw) == 0 || len(raw) > maxReplayBytes {
+		return nil, false
+	}
+
+	var replay replayPayload
+	if err := json.Unmarshal(raw, &replay); err != nil {
+		return nil, false
+	}
+	if replay.V != 1 || replay.Seed < 0 || replay.Seed > math.MaxUint32 {
+		return nil, false
+	}
+	if replay.Duration < 0 || replay.Duration > maxReplayDurationMs {
+		return nil, false
+	}
+	if replay.Inputs == nil || len(replay.Inputs) > maxReplayInputs {
+		return nil, false
+	}
+
+	lastT := int64(0)
+	for _, input := range replay.Inputs {
+		if input.T < 0 || input.T > replay.Duration || input.T < lastT {
+			return nil, false
+		}
+		lastT = input.T
+
+		switch input.A {
+		case "jump", "duck":
+			if input.K != "" {
+				return nil, false
+			}
+		case "release":
+			if input.K != "jump" && input.K != "duck" {
+				return nil, false
+			}
+		default:
+			return nil, false
+		}
+	}
+
+	normalized, err := json.Marshal(replay)
+	if err != nil || len(normalized) > maxReplayBytes {
+		return nil, false
+	}
+	return normalized, true
+}
+
+// ---------- 观看他人录像 ----------
+
+func (s *server) handleGetReplay(c *gin.Context) {
+	name, err := normalizeUsername(c.Query("username"))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_username", err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), redisTimeout)
+	defer cancel()
+
+	data, err := s.rdb.Get(ctx, replayKey(name)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		writeError(c, http.StatusNotFound, "replay_not_found", "no replay for this player")
+		return
+	}
+	if err != nil {
+		s.replyRedisError(c, err)
+		return
+	}
+
+	c.Header("Cache-Control", "no-store")
+	c.Data(http.StatusOK, "application/json; charset=utf-8", data)
 }
 
 // ---------- 分页排行榜 ----------
 
 type entry struct {
-	Rank     int64  `json:"rank"`
-	Username string `json:"username"`
-	Score    int64  `json:"score"`
-	IsMe     bool   `json:"is_me"`
+	Rank      int64  `json:"rank"`
+	Username  string `json:"username"`
+	Score     int64  `json:"score"`
+	IsMe      bool   `json:"is_me"`
+	HasReplay bool   `json:"has_replay"`
 }
 
 type leaderboardResponse struct {
@@ -319,6 +465,22 @@ func (s *server) fetchPage(ctx context.Context, page int64, limit int) ([]entry,
 			Username: name,
 			Score:    int64(math.Round(z.Score)),
 		})
+	}
+
+	// 一次 pipeline 检查本页每个玩家是否有录像；失败时降级为 false，不影响榜单。
+	if len(entries) > 0 {
+		pipe := s.rdb.Pipeline()
+		checks := make([]*redis.IntCmd, len(entries))
+		for i := range entries {
+			checks[i] = pipe.Exists(ctx, replayKey(entries[i].Username))
+		}
+		if _, err := pipe.Exec(ctx); err != nil {
+			log.Printf("replay existence check failed: %v", err)
+		} else {
+			for i := range entries {
+				entries[i].HasReplay = checks[i].Val() > 0
+			}
+		}
 	}
 	return entries, nil
 }
