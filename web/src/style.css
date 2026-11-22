@@ -501,7 +501,7 @@ button.locate {
 
 .rows-head {
   display: grid;
-  grid-template-columns: 64px 1fr 84px;
+  grid-template-columns: 58px 1fr 76px 56px;
   gap: 4px;
   padding: 9px 16px 6px;
   margin-top: 4px;
@@ -536,7 +536,7 @@ button.locate {
 
 .row {
   display: grid;
-  grid-template-columns: 64px 1fr 84px;
+  grid-template-columns: 58px 1fr 76px 56px;
   gap: 4px;
   align-items: center;
   padding: 7px 8px;
@@ -565,6 +565,18 @@ button.locate {
 .col-score {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.col-action {
+  text-align: right;
+}
+
+button.watch {
+  padding: 2px 6px;
+  border-color: var(--line-strong);
+  color: var(--fg-dim);
+  font-size: 8px;
+  letter-spacing: 0.08em;
 }
 
 .row[data-rank='1'] .col-rank {

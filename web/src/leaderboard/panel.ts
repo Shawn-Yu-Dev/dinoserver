@@ -21,6 +21,7 @@ export class LeaderboardPanel {
   constructor(
     private readonly els: PanelElements,
     private readonly getUsername: () => string,
+    private readonly onWatch: (username: string) => void,
   ) {
     els.prev.addEventListener('click', () => void this.load(this.page - 1));
     els.next.addEventListener('click', () => void this.load(this.page + 1));
@@ -100,7 +101,22 @@ export class LeaderboardPanel {
     score.className = 'col-score';
     score.textContent = String(e.score).padStart(6, '0');
 
-    li.append(rank, name, score);
+    const action = document.createElement('span');
+    action.className = 'col-action';
+    if (e.has_replay) {
+      const watch = document.createElement('button');
+      watch.type = 'button';
+      watch.className = 'watch';
+      watch.textContent = 'WATCH';
+      watch.setAttribute('aria-label', `Watch replay of ${e.username}`);
+      watch.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.onWatch(e.username);
+      });
+      action.append(watch);
+    }
+
+    li.append(rank, name, score, action);
     return li;
   }
 

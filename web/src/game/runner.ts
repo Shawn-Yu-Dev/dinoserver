@@ -105,6 +105,11 @@ export class ChromeDinoGame {
     return this.mode === 'replaying';
   }
 
+  /** 当前是否有一局正在进行（含暂停）。 */
+  get playing(): boolean {
+    return this.runner.playing;
+  }
+
   /**
    * 直接调用官方 restart()。
    * 官方键盘重开受 isCanvasInView() 限制；页面滚动后按钮或兜底逻辑可绕过该限制。
